@@ -185,7 +185,7 @@ jobs:
       - name: Load images
         run: |
           gunzip -c images.tar.gz | docker load
-          # Optional: push to registry so docker-compose pull isn't needed or docker-compose up uses cache
+          # Optional: push to registry so docker compose pull isn't needed or docker compose up uses cache
       - name: Setup environment
         run: |
           echo "REDIS_HOST=redis" > .env
@@ -193,13 +193,13 @@ jobs:
           echo "API_URL=http://api:8000" >> .env
           echo "FRONTEND_PORT=3000" >> .env
       - name: Start services
-        run: docker-compose up -d
+        run: docker compose up -d
       - name: Wait for services
         run: |
           for i in {1..30}; do
-            frontend_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q frontend))
-            worker_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q worker))
-            api_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q api))
+            frontend_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker compose ps -q frontend))
+            worker_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker compose ps -q worker))
+            api_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker compose ps -q api))
             if [[ "$frontend_health" == "\"healthy\"" && "$worker_health" == "\"healthy\"" && "$api_health" == "\"healthy\"" ]]; then
               HEALTHY=1
               break
@@ -208,7 +208,7 @@ jobs:
           done
           if [ -z "$HEALTHY" ]; then
             echo "Services failed to become healthy"
-            docker-compose logs
+            docker compose logs
             exit 1
           fi
       - name: Integration Test
@@ -243,7 +243,7 @@ jobs:
           echo "Integration Test Passed!"
       - name: Cleanup
         if: always()
-        run: docker-compose down
+        run: docker compose down
 
   deploy:
     needs: integration-test

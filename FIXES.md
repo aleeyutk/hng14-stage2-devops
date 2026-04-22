@@ -1,12 +1,6 @@
-# FIXES.md
-
-Every bug found in the starter repository, documented with file, line, issue, and fix.
-
----
-
 **File:** `api/.env`
 **Line:** 1-2
-**Issue:** Real credentials committed to the repository. `REDIS_PASSWORD=supersecretpassword123` is exposed in git history, a critical security violation.
+**Issue:** Real credentials committed to the repository. REDIS_PASSWORD=supersecretpassword123 is exposed in git history, a critical security violation.
 **Fix:** Deleted the file, added `.env` to `.gitignore`, removed from git tracking with `git rm --cached api/.env`
 
 ---
@@ -76,26 +70,25 @@ Every bug found in the starter repository, documented with file, line, issue, an
 
 **File:** `frontend/app.js`
 **Line:** 5
-**Issue:** `API_URL = "http://localhost:8000"` hardcoded. The frontend container cannot reach the API via localhost in Docker — must use the Docker service name.
+**Issue:** `API_URL = "http://localhost:8000"` hardcoded. The frontend container cannot reach the API via localhost in Docker.
 **Fix:** Changed to `const API_URL = process.env.API_URL || "http://api:8000"`
 
 ---
 
 **File:** `frontend/app.js`
 **Line:** 29
-**Issue:** Port hardcoded as `3000`. Should be configurable via environment variable for flexibility across environments.
+**Issue:** Port hardcoded as 3000. Should be configurable via environment variable.
 **Fix:** Changed to `app.listen(process.env.PORT || 3000, ...)`
 
 ---
 
 **File:** `frontend/package.json`
 **Line:** entire file
-**Issue:** No ESLint dependency or lint script. CI pipeline requires ESLint — pipeline will fail at lint stage with no configuration present.
+**Issue:** No ESLint dependency or lint script. CI pipeline will fail at lint stage.
 **Fix:** Added `eslint` to devDependencies, added `"lint": "eslint app.js"` script, added `.eslintrc.json`
 
 ---
 
 **File:** `.gitignore` (missing)
-**Issue:** No .gitignore exists in the repository, which directly caused `api/.env` to be committed with real credentials.
-**Fix:** Created root `.gitignore` covering `.env`, `node_modules/`, `__pycache__/`, `*.pyc`, `.coverage`, `htmlcov/`, `*.egg-info/`
-
+**Issue:** No .gitignore exists, which directly caused `api/.env` to be committed with real credentials.
+**Fix:** Created root `.gitignore` covering `.env`, `node_modules/`, `__pycache__/`, `*.pyc`, `.coverage`, `htmlcov/`

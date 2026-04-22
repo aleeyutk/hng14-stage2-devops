@@ -45,8 +45,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: |
-          pip install -r api/requirements.txt
-          pip install pytest pytest-cov fakeredis httpx
+          pip install fastapi==0.104.1 uvicorn==0.24.0 redis==5.0.1
+          pip install pytest==7.4.3 pytest-cov==4.1.0 fakeredis==2.20.0 httpx==0.25.2 anyio==3.7.1
       - name: Create __init__.py
         run: touch api/__init__.py api/tests/__init__.py
       - name: Run Pytest

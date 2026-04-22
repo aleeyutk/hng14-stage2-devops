@@ -120,7 +120,6 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL'
           ignore-unfixed: true
-          trivyignores: .trivyignore
       - name: Pull worker
         run: docker pull localhost:5000/worker:latest
       - name: Scan Worker with Trivy
@@ -132,7 +131,6 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL'
           ignore-unfixed: true
-          trivyignores: .trivyignore
       - name: Pull frontend
         run: docker pull localhost:5000/frontend:latest
       - name: Scan Frontend with Trivy
@@ -144,7 +142,6 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL'
           ignore-unfixed: true
-          trivyignores: .trivyignore
       - name: Upload Trivy Results
         uses: actions/upload-artifact@v4
         if: always()

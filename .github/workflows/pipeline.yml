@@ -1,0 +1,275 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install flake8
+        run: pip install flake8
+      - name: Lint Python (api and worker)
+        run: flake8 api/ worker/ --max-line-length=120
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install NPM DevDeps
+        working-directory: ./frontend
+        run: npm ci || npm install
+      - name: Lint JavaScript
+        working-directory: ./frontend
+        run: npm run lint
+      - name: Lint Dockerfiles (Hadolint)
+        run: |
+          docker run --rm -i hadolint/hadolint < api/Dockerfile
+          docker run --rm -i hadolint/hadolint < worker/Dockerfile
+          docker run --rm -i hadolint/hadolint < frontend/Dockerfile
+
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          pip install -r api/requirements.txt
+          pip install pytest pytest-cov fakeredis httpx
+      - name: Create __init__.py
+        run: touch api/__init__.py api/tests/__init__.py
+      - name: Run Pytest
+        run: PYTHONPATH=. pytest --cov=api --cov-report=xml api/tests/
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Images
+        run: |
+          docker build -t localhost:5000/frontend:${{ github.sha }} ./frontend
+          docker build -t localhost:5000/frontend:latest ./frontend
+          docker build -t localhost:5000/api:${{ github.sha }} ./api
+          docker build -t localhost:5000/api:latest ./api
+          docker build -t localhost:5000/worker:${{ github.sha }} ./worker
+          docker build -t localhost:5000/worker:latest ./worker
+      - name: Push to local registry
+        run: |
+          docker push localhost:5000/frontend:${{ github.sha }}
+          docker push localhost:5000/frontend:latest
+          docker push localhost:5000/api:${{ github.sha }}
+          docker push localhost:5000/api:latest
+          docker push localhost:5000/worker:${{ github.sha }}
+          docker push localhost:5000/worker:latest
+      - name: Save images for next jobs
+        run: |
+          docker save localhost:5000/frontend:latest localhost:5000/api:latest localhost:5000/worker:latest | gzip > images.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: images.tar.gz
+
+  security-scan:
+    needs: build
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+      - name: Load images and push to registry
+        run: |
+          gunzip -c images.tar.gz | docker load
+          docker push localhost:5000/frontend:latest
+          docker push localhost:5000/api:latest
+          docker push localhost:5000/worker:latest
+      - name: Pull api
+        run: docker pull localhost:5000/api:latest
+      - name: Scan API with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'localhost:5000/api:latest'
+          format: 'sarif'
+          output: 'trivy-api.sarif'
+          exit-code: '1'
+          severity: 'CRITICAL'
+      - name: Pull worker
+        run: docker pull localhost:5000/worker:latest
+      - name: Scan Worker with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'localhost:5000/worker:latest'
+          format: 'sarif'
+          output: 'trivy-worker.sarif'
+          exit-code: '1'
+          severity: 'CRITICAL'
+      - name: Pull frontend
+        run: docker pull localhost:5000/frontend:latest
+      - name: Scan Frontend with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'localhost:5000/frontend:latest'
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+          exit-code: '1'
+          severity: 'CRITICAL'
+      - name: Upload Trivy Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results
+          path: '*.sarif'
+
+  integration-test:
+    needs: security-scan
+    runs-on: ubuntu-latest
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+      - name: Load images
+        run: |
+          gunzip -c images.tar.gz | docker load
+          # Optional: push to registry so docker-compose pull isn't needed or docker-compose up uses cache
+      - name: Setup environment
+        run: |
+          echo "REDIS_HOST=redis" > .env
+          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
+          echo "API_URL=http://api:8000" >> .env
+          echo "FRONTEND_PORT=3000" >> .env
+      - name: Start services
+        run: docker-compose up -d
+      - name: Wait for services
+        run: |
+          for i in {1..30}; do
+            frontend_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q frontend))
+            worker_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q worker))
+            api_health=$(docker inspect --format="{{json .State.Health.Status}}" $(docker-compose ps -q api))
+            if [[ "$frontend_health" == "\"healthy\"" && "$worker_health" == "\"healthy\"" && "$api_health" == "\"healthy\"" ]]; then
+              HEALTHY=1
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "$HEALTHY" ]; then
+            echo "Services failed to become healthy"
+            docker-compose logs
+            exit 1
+          fi
+      - name: Integration Test
+        run: |
+          # Ensure tool installation
+          sudo apt-get install -y jq curl
+
+          response=$(curl -s -X POST http://localhost:3000/submit)
+          job_id=$(echo $response | jq -r .job_id)
+          echo "Job ID created: $job_id"
+          
+          if [ "$job_id" == "null" ]; then
+            echo "Failed to create job"
+            exit 1
+          fi
+          
+          # Poll status
+          for i in {1..30}; do
+            status=$(curl -s http://localhost:3000/status/$job_id | jq -r .status)
+            echo "Poll $i - Status: $status"
+            if [ "$status" == "completed" ]; then
+              SUCCESS=1
+              break
+            fi
+            sleep 2
+          done
+          
+          if [ -z "$SUCCESS" ]; then
+            echo "Job did not complete in time"
+            exit 1
+          fi
+          echo "Integration Test Passed!"
+      - name: Cleanup
+        if: always()
+        run: docker-compose down
+
+  deploy:
+    needs: integration-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd /home/hngdevops/hng14-stage2-devops
+            git pull origin main
+
+            # Build new images
+            docker compose build
+
+            # Start new api container with temp name for health check
+            docker compose up -d --no-deps --scale api=0 redis
+            docker run -d \
+              --name api_canary \
+              --network app-network \
+              --env-file .env \
+              $(docker compose config --images api) || \
+              docker compose images api | tail -1 | awk '{print $3}'
+
+            # Poll health for up to 60 seconds
+            HEALTHY=false
+            for i in {1..12}; do
+              STATUS=$(docker inspect --format='{{.State.Health.Status}}' api_canary 2>/dev/null || echo "missing")
+              if [ "$STATUS" = "healthy" ]; then
+                HEALTHY=true
+                break
+              fi
+              echo "Waiting for health check... attempt $i (status: $STATUS)"
+              sleep 5
+            done
+
+            if [ "$HEALTHY" = "true" ]; then
+              echo "Health check passed, promoting new container"
+              docker stop api_canary
+              docker rm api_canary
+              docker compose up -d
+            else
+              echo "Health check failed, aborting deploy"
+              docker stop api_canary || true
+              docker rm api_canary || true
+              exit 1
+            fi

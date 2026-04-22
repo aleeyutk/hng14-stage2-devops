@@ -1,12 +1,12 @@
 # Builder stage
-FROM python:3.13-slim AS builder
+FROM python:3.13-alpine AS builder
 
 WORKDIR /build
 
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Final stage - use alpine for minimal attack surface
+# Final stage
 FROM python:3.13-alpine
 
 WORKDIR /app

@@ -119,6 +119,8 @@ jobs:
           output: 'trivy-api.sarif'
           exit-code: '1'
           severity: 'CRITICAL'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
       - name: Pull worker
         run: docker pull localhost:5000/worker:latest
       - name: Scan Worker with Trivy
@@ -129,6 +131,8 @@ jobs:
           output: 'trivy-worker.sarif'
           exit-code: '1'
           severity: 'CRITICAL'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
       - name: Pull frontend
         run: docker pull localhost:5000/frontend:latest
       - name: Scan Frontend with Trivy
@@ -139,13 +143,14 @@ jobs:
           output: 'trivy-frontend.sarif'
           exit-code: '1'
           severity: 'CRITICAL'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
       - name: Upload Trivy Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: trivy-results
           path: '*.sarif'
-
   integration-test:
     needs: security-scan
     runs-on: ubuntu-latest

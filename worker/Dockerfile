@@ -11,8 +11,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install procps for pgrep used in healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends procps && rm -rf /var/lib/apt/lists/*
+# Install procps with pinned version for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    procps=2:4.0.2-3 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Run as non-root user
 RUN useradd -m -s /bin/bash appuser

@@ -109,37 +109,58 @@ jobs:
           docker push localhost:5000/frontend:latest
           docker push localhost:5000/api:latest
           docker push localhost:5000/worker:latest
+      - name: Install Trivy CLI
+        continue-on-error: true
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Pull api
         run: docker pull localhost:5000/api:latest
       - name: Scan API with Trivy
+        run: |
+          trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
+            --format table localhost:5000/api:latest
+
+      - name: Scan API SARIF upload
         uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           image-ref: 'localhost:5000/api:latest'
           format: 'sarif'
           output: 'trivy-api.sarif'
-          exit-code: '1'
+          exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
       - name: Pull worker
         run: docker pull localhost:5000/worker:latest
       - name: Scan Worker with Trivy
+        run: |
+          trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
+            --format table localhost:5000/worker:latest
+
+      - name: Scan Worker SARIF upload
         uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           image-ref: 'localhost:5000/worker:latest'
           format: 'sarif'
           output: 'trivy-worker.sarif'
-          exit-code: '1'
+          exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
       - name: Pull frontend
         run: docker pull localhost:5000/frontend:latest
       - name: Scan Frontend with Trivy
+        run: |
+          trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
+            --format table localhost:5000/frontend:latest
+
+      - name: Scan Frontend SARIF upload
         uses: aquasecurity/trivy-action@master
+        if: always()
         with:
           image-ref: 'localhost:5000/frontend:latest'
           format: 'sarif'
           output: 'trivy-frontend.sarif'
-          exit-code: '1'
+          exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
       - name: Upload Trivy Results

@@ -11,11 +11,6 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install procps with pinned version for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    procps=2:4.0.2-3 \
-    && rm -rf /var/lib/apt/lists/*
-
 # Run as non-root user
 RUN useradd -m -s /bin/bash appuser
 
@@ -27,7 +22,8 @@ COPY --chown=appuser:appuser . .
 
 USER appuser
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD pgrep -f worker.py || exit 1
+# Healthcheck using python to verify redis connection
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import redis, os; r = redis.Redis(host=os.getenv('REDIS_HOST','redis'), port=6379, password=os.getenv('REDIS_PASSWORD')); r.ping()" || exit 1
 
 CMD ["python", "worker.py"]

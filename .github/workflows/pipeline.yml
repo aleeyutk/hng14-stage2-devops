@@ -167,7 +167,7 @@ jobs:
           docker push localhost:5000/api:latest
           docker push localhost:5000/worker:latest
 
-       - name: Install Trivy
+      - name: Install Trivy
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.69.3
 

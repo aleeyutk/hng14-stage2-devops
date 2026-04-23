@@ -1,17 +1,17 @@
-# Builder stage
-FROM python:3.13-slim AS builder
+# Stage 1: builder
+FROM python:3.13-alpine AS builder
 
 WORKDIR /build
 
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Final stage - use alpine for minimal attack surface
-FROM python:3.13-alpine
+# Stage 2: final
+FROM python:3.13-alpine AS final
 
 WORKDIR /app
 
-RUN adduser -D appuser
+RUN useradd -r -s /bin/false appuser 2>/dev/null || adduser -S -H appuser
 
 COPY --from=builder /root/.local /home/appuser/.local
 ENV PATH=/home/appuser/.local/bin:$PATH

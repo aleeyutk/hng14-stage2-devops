@@ -1,4 +1,4 @@
-# Builder stage - install all deps including devDependencies
+# Stage 1: builder
 FROM node:20-alpine AS builder
 
 WORKDIR /build
@@ -8,12 +8,12 @@ RUN npm install
 
 COPY . .
 
-# Final stage - production only
-FROM node:20-alpine
+# Stage 2: final
+FROM node:20-alpine AS final
 
 WORKDIR /app
 
-RUN adduser -D appuser
+RUN useradd -r -s /bin/false appuser 2>/dev/null || adduser -S -H appuser
 
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev

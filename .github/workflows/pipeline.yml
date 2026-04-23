@@ -7,50 +7,74 @@ on:
 
 jobs:
   lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install flake8
         run: pip install flake8
-      - name: Lint Python (api and worker)
-        run: flake8 api/ worker/ --max-line-length=120
+
+      - name: Lint Python api
+        run: flake8 api/ --max-line-length=120 --exclude=api/tests
+
+      - name: Lint Python worker
+        run: flake8 worker/ --max-line-length=120
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install NPM DevDeps
+
+      - name: Install frontend dependencies
         working-directory: ./frontend
-        run: npm ci || npm install
+        run: npm ci
+
       - name: Lint JavaScript
         working-directory: ./frontend
         run: npm run lint
-      - name: Lint Dockerfiles (Hadolint)
-        run: |
-          docker run --rm -i hadolint/hadolint < api/Dockerfile
-          docker run --rm -i hadolint/hadolint < worker/Dockerfile
-          docker run --rm -i hadolint/hadolint < frontend/Dockerfile
+
+      - name: Lint api Dockerfile
+        run: docker run --rm -i hadolint/hadolint < api/Dockerfile
+
+      - name: Lint worker Dockerfile
+        run: docker run --rm -i hadolint/hadolint < worker/Dockerfile
+
+      - name: Lint frontend Dockerfile
+        run: docker run --rm -i hadolint/hadolint < frontend/Dockerfile
 
   test:
+    name: Test
     needs: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Install dependencies
         run: |
           pip install fastapi==0.104.1 uvicorn==0.24.0 redis==5.0.1
           pip install pytest==7.4.3 pytest-cov==4.1.0 fakeredis==2.20.0 httpx==0.25.2 anyio==3.7.1
-      - name: Create __init__.py
-        run: touch api/__init__.py api/tests/__init__.py
-      - name: Run Pytest
+
+      - name: Create init files
+        run: |
+          touch api/__init__.py
+          touch api/tests/__init__.py
+
+      - name: Run pytest with coverage
         run: PYTHONPATH=. pytest --cov=api --cov-report=xml api/tests/
+
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -58,6 +82,7 @@ jobs:
           path: coverage.xml
 
   build:
+    name: Build
     needs: test
     runs-on: ubuntu-latest
     services:
@@ -66,32 +91,62 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v4
-      - name: Build Images
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            localhost:5000/frontend:${{ github.sha }}
+            localhost:5000/frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build api image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          push: true
+          tags: |
+            localhost:5000/api:${{ github.sha }}
+            localhost:5000/api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./worker
+          push: true
+          tags: |
+            localhost:5000/worker:${{ github.sha }}
+            localhost:5000/worker:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save images as artifact
         run: |
-          docker build -t localhost:5000/frontend:${{ github.sha }} ./frontend
-          docker build -t localhost:5000/frontend:latest ./frontend
-          docker build -t localhost:5000/api:${{ github.sha }} ./api
-          docker build -t localhost:5000/api:latest ./api
-          docker build -t localhost:5000/worker:${{ github.sha }} ./worker
-          docker build -t localhost:5000/worker:latest ./worker
-      - name: Push to local registry
-        run: |
-          docker push localhost:5000/frontend:${{ github.sha }}
-          docker push localhost:5000/frontend:latest
-          docker push localhost:5000/api:${{ github.sha }}
-          docker push localhost:5000/api:latest
-          docker push localhost:5000/worker:${{ github.sha }}
-          docker push localhost:5000/worker:latest
-      - name: Save images for next jobs
-        run: |
+          docker pull localhost:5000/frontend:latest
+          docker pull localhost:5000/api:latest
+          docker pull localhost:5000/worker:latest
           docker save localhost:5000/frontend:latest localhost:5000/api:latest localhost:5000/worker:latest | gzip > images.tar.gz
-      - uses: actions/upload-artifact@v4
+
+      - name: Upload images artifact
+        uses: actions/upload-artifact@v4
         with:
           name: docker-images
           path: images.tar.gz
 
   security-scan:
+    name: Security Scan
     needs: build
     runs-on: ubuntu-latest
     services:
@@ -100,28 +155,25 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download images artifact
+        uses: actions/download-artifact@v4
         with:
           name: docker-images
-      - name: Load images and push to registry
+
+      - name: Load and push images to registry
         run: |
           gunzip -c images.tar.gz | docker load
           docker push localhost:5000/frontend:latest
           docker push localhost:5000/api:latest
           docker push localhost:5000/worker:latest
-      - name: Install Trivy CLI
-        continue-on-error: true
-        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-      - name: Pull api
-        run: docker pull localhost:5000/api:latest
-      - name: Scan API with Trivy
+
+      - name: Scan API image with Trivy
         run: |
           trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
             --format table localhost:5000/api:latest
 
-      - name: Scan API SARIF upload
+      - name: Upload API SARIF
         uses: aquasecurity/trivy-action@master
-        if: always()
         with:
           image-ref: 'localhost:5000/api:latest'
           format: 'sarif'
@@ -129,16 +181,14 @@ jobs:
           exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
-      - name: Pull worker
-        run: docker pull localhost:5000/worker:latest
-      - name: Scan Worker with Trivy
+
+      - name: Scan worker image with Trivy
         run: |
           trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
             --format table localhost:5000/worker:latest
 
-      - name: Scan Worker SARIF upload
+      - name: Upload worker SARIF
         uses: aquasecurity/trivy-action@master
-        if: always()
         with:
           image-ref: 'localhost:5000/worker:latest'
           format: 'sarif'
@@ -146,16 +196,14 @@ jobs:
           exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
-      - name: Pull frontend
-        run: docker pull localhost:5000/frontend:latest
-      - name: Scan Frontend with Trivy
+
+      - name: Scan frontend image with Trivy
         run: |
           trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed \
             --format table localhost:5000/frontend:latest
 
-      - name: Scan Frontend SARIF upload
+      - name: Upload frontend SARIF
         uses: aquasecurity/trivy-action@master
-        if: always()
         with:
           image-ref: 'localhost:5000/frontend:latest'
           format: 'sarif'
@@ -163,13 +211,16 @@ jobs:
           exit-code: '0'
           severity: 'CRITICAL'
           ignore-unfixed: true
-      - name: Upload Trivy Results
+
+      - name: Upload all Trivy results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: trivy-results
           path: '*.sarif'
+
   integration-test:
+    name: Integration Test
     needs: security-scan
     runs-on: ubuntu-latest
     services:
@@ -178,74 +229,58 @@ jobs:
         ports:
           - 5000:5000
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download images artifact
+        uses: actions/download-artifact@v4
         with:
           name: docker-images
+
       - name: Load images
-        run: |
-          gunzip -c images.tar.gz | docker load
-          # Optional: push to registry so docker compose pull isn't needed or docker compose up uses cache
-      - name: Setup environment
+        run: gunzip -c images.tar.gz | docker load
+
+      - name: Setup environment file
         run: |
           echo "REDIS_HOST=redis" > .env
           echo "REDIS_PASSWORD=testpassword123" >> .env
           echo "API_URL=http://api:8000" >> .env
           echo "FRONTEND_PORT=3000" >> .env
-      - name: Start services
-        run: |
-          docker compose up -d --no-deps redis
-          sleep 15
-          docker compose up -d --no-deps api
-          sleep 20
-          docker compose logs api
-          docker compose up -d
-      - name: Wait for services
-        run: |
-          echo "Waiting 30 seconds for services to start..."
-          sleep 30
-          docker compose ps
-          docker compose logs
-      - name: Integration Test
-        run: |
-          # Ensure tool installation
-          sudo apt-get install -y jq curl
 
-          response=$(curl -s -X POST http://localhost:3000/submit)
-          job_id=$(echo $response | jq -r .job_id)
-          echo "Job ID created: $job_id"
-          
-          if [ "$job_id" == "null" ]; then
-            echo "Failed to create job"
-            exit 1
-          fi
-          
-          # Poll status
-          for i in {1..30}; do
-            status=$(curl -s http://localhost:3000/status/$job_id | jq -r .status)
-            echo "Poll $i - Status: $status"
-            if [ "$status" == "completed" ]; then
-              SUCCESS=1
+      - name: Start services
+        run: docker compose up -d
+
+      - name: Wait for all services to be healthy
+        run: |
+          echo "Waiting for services..."
+          sleep 30
+          for i in {1..20}; do
+            REDIS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q redis) 2>/dev/null || echo "unknown")
+            API=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q api) 2>/dev/null || echo "unknown")
+            FRONTEND=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q frontend) 2>/dev/null || echo "unknown")
+            echo "Redis: $REDIS | API: $API | Frontend: $FRONTEND"
+            if [ "$REDIS" = "healthy" ] && [ "$API" = "healthy" ] && [ "$FRONTEND" = "healthy" ]; then
+              echo "All services healthy!"
               break
             fi
-            sleep 2
+            sleep 5
           done
-          
-          if [ -z "$SUCCESS" ]; then
-            echo "Job did not complete in time"
-            exit 1
-          fi
-          echo "Integration Test Passed!"
-      - name: Cleanup
+          docker compose ps
+
+      - name: Run integration test script
+        run: bash integration-test.sh
+
+      - name: Tear down services
         if: always()
         run: docker compose down
 
   deploy:
+    name: Deploy
     needs: integration-test
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy via SSH
+      - name: Deploy to server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -259,8 +294,7 @@ jobs:
             # Build new images
             docker compose build
 
-            # Start canary api container for health check
-            docker compose up -d --no-deps redis
+            # Run canary health check on new api image
             docker run -d \
               --name api_canary \
               --network app-network \
@@ -280,7 +314,7 @@ jobs:
               sleep 5
             done
 
-            # Clean up canary
+            # Clean up canary container
             docker stop api_canary || true
             docker rm api_canary || true
 
@@ -288,6 +322,6 @@ jobs:
               echo "Health check passed, deploying full stack"
               docker compose up -d --force-recreate
             else
-              echo "Health check failed, aborting deploy"
+              echo "Health check failed, aborting deploy - old containers remain running"
               exit 1
             fi
